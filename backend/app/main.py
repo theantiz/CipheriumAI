@@ -5,10 +5,20 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from fastapi import HTTPException, Depends
+from sqlalchemy.orm import Session
+
 from app.config import settings
-from app.database import engine, Base, SessionLocal, ACTIVE_DATABASE_URL
+from app.database import engine, Base, SessionLocal, get_db, ACTIVE_DATABASE_URL
 from app.data.seed import seed_database
-from app.routers import auth, quiz, analytics, tutor
+from app.models import User
+from app.schemas import DeleteAccountResponse
+from app.routers import auth, quiz, analytics, tutor, admin, profile, feedback, health
+from app.middleware import RequestLoggingMiddleware, SecurityHeadersMiddleware
+from app.routers.auth import get_current_user, delete_account
+from app.limiter import limiter, rate_limit_exceeded_handler
 
 # Structured logging configuration
 logging.basicConfig(
@@ -44,6 +54,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Attach SlowAPI rate limiter state and exception handler
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
 # Robust CORS configuration
 app.add_middleware(
     CORSMiddleware,
@@ -53,30 +68,42 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Enterprise defensive security headers (NFR-SEC-01)
+app.add_middleware(SecurityHeadersMiddleware)
+
+# Distributed request tracing & latency tracking (NFR-OBS-01)
+app.add_middleware(RequestLoggingMiddleware)
+
 # Global exception handler for uncaught server errors
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
+    if isinstance(exc, (RateLimitExceeded, HTTPException)):
+        raise exc
     logger.error(f"Unhandled error on {request.method} {request.url.path}: {exc}", exc_info=True)
     return JSONResponse(
         status_code=500,
         content={"detail": "An internal server error occurred. Please try again later."}
     )
 
+# Root DELETE /me alias delegating to auth.delete_account
+@app.delete("/me", response_model=DeleteAccountResponse, tags=["Authentication"])
+def delete_account_alias(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    return delete_account(current_user=current_user, db=db)
+
 # Include Routers
 app.include_router(auth.router)
 app.include_router(quiz.router)
 app.include_router(analytics.router)
 app.include_router(tutor.router)
+app.include_router(admin.router)
+app.include_router(profile.router)
+app.include_router(feedback.router)
+app.include_router(health.router)
 
-@app.get("/health")
-def health_check():
-    return {
-        "status": "healthy",
-        "service": "Cipherium AI API",
-        "version": "2.0.0",
-        "environment": settings.ENVIRONMENT,
-        "database": "postgresql" if "postgresql" in ACTIVE_DATABASE_URL else "sqlite"
-    }
+# Health endpoints delegated to app.routers.health
 
 @app.get("/")
 def root():

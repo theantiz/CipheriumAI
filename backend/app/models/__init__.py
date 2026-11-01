@@ -13,7 +13,11 @@ class User(Base):
     name = Column(String(100), nullable=False)
     email = Column(String(150), unique=True, index=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
-    role = Column(String(50), default="student")
+    role = Column(String(50), default="student", nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+    deleted_at = Column(DateTime, nullable=True)
+    password_reset_token = Column(String(255), nullable=True, index=True)
+    reset_token_expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=utc_now)
 
     attempts = relationship("QuizAttempt", back_populates="user")
@@ -22,6 +26,10 @@ class User(Base):
     messages = relationship("TutorMessage", back_populates="user")
     settings = relationship("UserSettings", back_populates="user", uselist=False)
     tasks = relationship("DailyTask", back_populates="user")
+    conversations = relationship("TutorConversation", back_populates="user")
+    feedbacks = relationship("Feedback", back_populates="user")
+    mastery_events = relationship("MasteryEvent", back_populates="user")
+    quiz_sessions = relationship("QuizSession", back_populates="user")
 
 class Topic(Base):
     __tablename__ = "topics"
@@ -37,6 +45,7 @@ class Topic(Base):
     questions = relationship("Question", back_populates="topic")
     resources = relationship("Resource", back_populates="topic")
     masteries = relationship("TopicMastery", back_populates="topic")
+    mastery_events = relationship("MasteryEvent", back_populates="topic")
 
 class Question(Base):
     __tablename__ = "questions"
@@ -48,9 +57,25 @@ class Question(Base):
     correct_answer = Column(String(255), nullable=False)
     difficulty = Column(Integer, default=1) # 1 to 5
     explanation = Column(Text, nullable=True)
+    status = Column(String(50), default="published", nullable=False) # draft, review, published, archived
+    version = Column(Integer, default=1, nullable=False)
 
     topic = relationship("Topic", back_populates="questions")
     attempts = relationship("QuizAttempt", back_populates="question")
+
+
+class QuizSession(Base):
+    __tablename__ = "quiz_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    session_type = Column(String(20), nullable=False, default="adaptive")
+    status = Column(String(20), nullable=False, default="active")
+    started_at = Column(DateTime, default=utc_now, nullable=False)
+    completed_at = Column(DateTime, nullable=True)
+
+    user = relationship("User", back_populates="quiz_sessions")
+    attempts = relationship("QuizAttempt", back_populates="session")
 
 class QuizAttempt(Base):
     __tablename__ = "quiz_attempts"
@@ -58,13 +83,20 @@ class QuizAttempt(Base):
     id = Column(Integer, primary_key=True, index=True)
     user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
     question_id = Column(Integer, ForeignKey("questions.id"), nullable=False)
+    session_id = Column(Integer, ForeignKey("quiz_sessions.id"), nullable=False, index=True)
     selected_answer = Column(String(255), nullable=False)
     is_correct = Column(Boolean, nullable=False)
     time_taken_seconds = Column(Integer, default=0)
+    # Attempts are grouped into a client-visible quiz session.  Keeping this on
+    # the attempt lets a session span questions from more than one topic.
+    quiz_id = Column(String(36), index=True, nullable=True)
+    hint_count = Column(Integer, default=0, nullable=False)
+    is_finalized = Column(Boolean, default=False, nullable=False)
     attempted_at = Column(DateTime, default=utc_now)
 
     user = relationship("User", back_populates="attempts")
     question = relationship("Question", back_populates="attempts")
+    session = relationship("QuizSession", back_populates="attempts")
 
 class TopicMastery(Base):
     __tablename__ = "topic_mastery"
@@ -92,6 +124,8 @@ class Resource(Base):
     difficulty = Column(Integer, default=1) # 1 to 5
     estimated_minutes = Column(Integer, default=15)
     summary = Column(Text, nullable=True)
+    version = Column(Integer, default=1, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
 
     topic = relationship("Topic", back_populates="resources")
 
@@ -125,10 +159,12 @@ class TutorMessage(Base):
     role = Column(String(20), nullable=False) # user or assistant
     message = Column(Text, nullable=False)
     topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+    conversation_id = Column(Integer, ForeignKey("tutor_conversations.id"), nullable=True)
     created_at = Column(DateTime, default=utc_now)
 
     user = relationship("User", back_populates="messages")
     topic = relationship("Topic")
+    conversation = relationship("TutorConversation", back_populates="messages")
 
 class UserSettings(Base):
     __tablename__ = "user_settings"
@@ -141,6 +177,7 @@ class UserSettings(Base):
     daily_streak_reminder = Column(Boolean, default=True)
     diagnostic_quiz_alert = Column(Boolean, default=True)
     weak_topic_ping = Column(Boolean, default=True)
+    notification_retention = Column(Boolean, default=True, nullable=False)
     custom_gemini_api_key = Column(String(255), nullable=True)
     updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
 
@@ -159,3 +196,33 @@ class DailyTask(Base):
 
     user = relationship("User", back_populates="tasks")
 
+
+class TutorConversation(Base):
+    __tablename__ = "tutor_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+    title = Column(String(255), default="New Conversation", nullable=False)
+    created_at = Column(DateTime, default=utc_now)
+    updated_at = Column(DateTime, default=utc_now, onupdate=utc_now)
+
+    user = relationship("User", back_populates="conversations")
+    topic = relationship("Topic")
+    messages = relationship("TutorMessage", back_populates="conversation")
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    feedback_type = Column(String(50), nullable=False) # tutor_rating, rec_rating, bug, too_easy, too_hard, not_relevant
+    target_id = Column(Integer, nullable=True)
+    rating = Column(Integer, nullable=True) # -1, 0, 1
+    comment = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=utc_now)
+
+    user = relationship("User", back_populates="feedbacks")
+
+# Imported after User and Topic so the relationships above can resolve cleanly.
+from app.models.mastery_event import MasteryEvent  # noqa: E402, F401
