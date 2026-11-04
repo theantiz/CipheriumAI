@@ -12,6 +12,7 @@ import PageContainer from './layout/PageContainer';
 import PageHeader from './layout/PageHeader';
 import FlashFixCard from './common/FlashFixCard';
 import ActivityHeatmap from './ActivityHeatmap';
+import MasteryTimeline from './MasteryTimeline';
 import CompetencyRadarChart from './CompetencyRadarChart';
 
 const totalsFor = (plans) =>
@@ -163,6 +164,7 @@ export default function AnalyticsFullView({
           description="Unified overview of your quiz performance, personalized topic diagnostics, and study plan momentum."
           actions={
             <div
+              className="page-segmented-controls"
               style={{
                 display: 'flex',
                 background: 'var(--bg-surface, #1E1E22)',
@@ -186,7 +188,7 @@ export default function AnalyticsFullView({
                   boxShadow: activeTab === 'mastery' ? '0 2px 8px rgba(0,0,0,0.3)' : 'none',
                 }}
               >
-                <BarChart2 size={14} color={activeTab === 'mastery' ? '#6366F1' : 'var(--text-secondary, #9CA3AF)'} /> Curriculum Mastery & AI Diagnostics
+                <BarChart2 size={14} color={activeTab === 'mastery' ? '#6366F1' : 'var(--text-secondary, #9CA3AF)'} /> Topic Mastery & Practice Analytics
               </button>
               <button
                 type="button"
@@ -212,12 +214,13 @@ export default function AnalyticsFullView({
       {/* ── TAB 1: CURRICULUM MASTERY & AI DIAGNOSTICS ── */}
       {activeTab === 'mastery' && (
         <>
+          <MasteryTimeline topics={analytics?.topics} />
           {/* Top KPI Cards (Full width row across all 12 columns) */}
           <div
             style={{
               gridColumn: '1 / -1',
               display: 'grid',
-              gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))',
               gap: '16px',
             }}
           >
@@ -285,7 +288,7 @@ export default function AnalyticsFullView({
                   Curriculum Mastery Scores
                 </h3>
                 <p style={{ color: 'var(--text-secondary, #9CA3AF)', fontSize: '0.78rem', margin: '4px 0 0' }}>
-                  Weighted composite of diagnostic accuracy and retrieval spacing across syllabus modules.
+                  Overall score combining quiz accuracy and review practice across topics.
                 </p>
               </div>
               <span style={{ fontSize: '0.74rem', background: 'rgba(99, 102, 241, 0.15)', color: '#818CF8', padding: '4px 8px', borderRadius: '8px', fontWeight: 700, border: '1px solid rgba(99, 102, 241, 0.3)' }}>
@@ -346,7 +349,7 @@ export default function AnalyticsFullView({
               </h3>
             </div>
             <p style={{ color: 'var(--text-secondary, #9CA3AF)', fontSize: '0.78rem', margin: '0 0 16px', lineHeight: 1.45 }}>
-              Topics with lowest diagnostic accuracy or overdue retrieval spacing.
+              Topics that need more practice or review.
             </p>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1, overflowY: 'auto' }}>
@@ -363,7 +366,7 @@ export default function AnalyticsFullView({
                     gap: '8px',
                   }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', overflowWrap: 'anywhere' }}>
                     <span style={{ fontSize: '0.84rem', fontWeight: 700, color: 'var(--text-primary, #F3F4F6)' }}>
                       {topic.topic_name}
                     </span>
@@ -381,7 +384,7 @@ export default function AnalyticsFullView({
                     </span>
                   </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px' }}>
+                  <div className="analytics-triage-actions" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '2px', flexWrap: 'wrap', gap: '8px' }}>
                     <span style={{ fontSize: '0.74rem', color: 'var(--text-secondary, #9CA3AF)' }}>
                       Risk: {Math.round((topic.ml_weak_probability || 0.75) * 100)}%
                     </span>
@@ -496,7 +499,7 @@ export default function AnalyticsFullView({
                   Quiz Score Distribution
                 </h4>
                 <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: 'var(--text-secondary, #9CA3AF)' }}>
-                  Accuracy brackets across diagnostic assessments
+                  How you scored across your practice quizzes
                 </p>
               </div>
               <Award size={16} color="#818CF8" />
@@ -576,9 +579,9 @@ export default function AnalyticsFullView({
               </div>
 
               {/* Progress Summary Cards */}
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: '16px', marginBottom: '22px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: '16px', marginBottom: '22px' }}>
                 {[
-                  { label: 'Overall Completion', value: `${completion}%`, Icon: Target, color: '#6366F1' },
+                  { label: 'Overall Completion', value: `${completion}%`, Icon: Target, color: 'var(--text-accent, #A5B4FC)' },
                   { label: 'Concepts Mastered', value: `${totals.topicsDone}/${totals.topics}`, Icon: CheckCircle2, color: '#10B981' },
                   { label: 'Resources Completed', value: `${totals.resourcesDone}/${totals.resources}`, Icon: BookOpen, color: '#8B5CF6' },
                   { label: 'Tracked Hours', value: `${totals.loggedHours}/${totals.planHours}h`, Icon: Clock, color: '#F59E0B' },

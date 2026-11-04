@@ -1,9 +1,12 @@
+import AiUsage from './AiUsage';
 import React, { useState, useEffect } from 'react';
 import {
-  User, Brain, Bell, ShieldCheck, Download, RefreshCw,
+  User, Brain, Bell, ShieldCheck, RefreshCw,
   LogOut, Eye, EyeOff, CheckCircle2
 } from 'lucide-react';
 import SettingSection from './common/SettingSection';
+import DeleteAccountSection from './common/DeleteAccountSection';
+import DataExport from './DataExport';
 import ToggleSwitch from './common/ToggleSwitch';
 import PageContainer from './layout/PageContainer';
 import PageHeader from './layout/PageHeader';
@@ -15,12 +18,14 @@ import { settingsAPI, geminiAPI } from '../services/api';
  * to persist learner preferences, AI engine hyperparameters, and security controls.
  */
 export default function SettingsView({
+  quota,
   user = null,
   aiModel = 'gemini-2.5-flash',
   setAiModel = () => {},
   sessionExpiresAt = null,
   onLogout = () => {},
-  customPlan = null,
+  onDeleteAccount,
+  deletionPending = false,
 }) {
   const storageKey = user?.email ? `cipherium_settings_${user.email}` : 'cipherium_settings_default';
 
@@ -118,36 +123,6 @@ export default function SettingsView({
   };
 
 
-  // Export Learning Telemetry as JSON
-  const handleExportData = () => {
-    const telemetry = {
-      user: {
-        name: user?.name || 'Student',
-        email: user?.email || '',
-        exportedAt: new Date().toISOString(),
-      },
-      settings: profile,
-      activeModel: aiModel,
-      activePlan: customPlan ? {
-        subject: customPlan.subject,
-        skillLevel: customPlan.skill_level,
-        durationWeeks: customPlan.duration_weeks,
-        completedHours: customPlan.completed_hours,
-      } : null,
-      platform: 'Cipherium AI v2.0',
-    };
-
-    const blob = new Blob([JSON.stringify(telemetry, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `cipherium_telemetry_${(user?.email || 'student').split('@')[0]}_${new Date().toISOString().slice(0, 10)}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
   // Safely refresh cached progress without dropping auth
   const handleRefreshCache = () => {
     try {
@@ -169,7 +144,7 @@ export default function SettingsView({
       <PageHeader
         eyebrow="ACCOUNT & WORKSPACE CONFIGURATION"
         title="Settings & Preferences"
-        description="Configure your academic targets, AI tutor hyperparameters, study reminders, and telemetry data."
+        description="Set your learning goals, study reminders, AI tutor settings, and account data."
         actions={
           saveStatus ? (
             <div
@@ -197,13 +172,14 @@ export default function SettingsView({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))',
+          gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 440px), 1fr))',
           gap: '24px',
           alignItems: 'start',
         }}
       >
         {/* Column 1: Academic Profile & AI Engine */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
+          <AiUsage quota={quota} />
           {/* 1. Academic & Student Profile */}
           <SettingSection
             icon={User}
@@ -213,10 +189,10 @@ export default function SettingsView({
           >
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px' }}>
               <div>
-                <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                <label htmlFor="profile-name" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                   Full Name
                 </label>
-                <input
+                <input id="profile-name"
                   type="text"
                   readOnly
                   value={user?.name || 'Alex Chen'}
@@ -234,10 +210,10 @@ export default function SettingsView({
               </div>
 
               <div>
-                <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                <label htmlFor="profile-email" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                   Email Address
                 </label>
-                <input
+                <input id="profile-email"
                   type="text"
                   readOnly
                   value={user?.email || 'student@cipherium.ai'}
@@ -255,10 +231,10 @@ export default function SettingsView({
               </div>
 
               <div>
-                <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                <label htmlFor="target-role" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                   Target Role / Specialization
                 </label>
-                <select
+                <select id="target-role"
                   value={profile.targetRole}
                   onChange={(e) => updateSetting('targetRole', e.target.value)}
                   style={{
@@ -281,10 +257,10 @@ export default function SettingsView({
               </div>
 
               <div>
-                <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                <label htmlFor="weekly-hours" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                   Weekly Study Goal (Hours)
                 </label>
-                <select
+                <select id="weekly-hours"
                   value={profile.weeklyHours}
                   onChange={(e) => updateSetting('weeklyHours', Number(e.target.value))}
                   style={{
@@ -313,7 +289,7 @@ export default function SettingsView({
           <SettingSection
             icon={Brain}
             title="AI Intelligence & Diagnostic Hyperparameters"
-            description="Configure pedagogical grounding, model latency, and adaptive assessment behavior."
+            description="Configure tutor responses, speed, and question difficulty behavior."
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {/* Model Switcher */}
@@ -355,10 +331,10 @@ export default function SettingsView({
 
               {/* Diagnostic Staircase Tuning */}
               <div>
-                <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                <label htmlFor="difficulty-mode" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                   Adaptive Diagnostic Behavior
                 </label>
-                <select
+                <select id="difficulty-mode"
                   value={profile.difficultyMode}
                   onChange={(e) => updateSetting('difficultyMode', e.target.value)}
                   style={{
@@ -381,11 +357,11 @@ export default function SettingsView({
 
                 {/* Custom API Key Input */}
                 <div>
-                  <label style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
+                  <label htmlFor="custom-api-key" style={{ fontSize: '0.76rem', fontWeight: 600, color: 'var(--text-secondary, #9CA3AF)', display: 'block', marginBottom: '6px' }}>
                     Optional Custom Gemini API Key (Bring Your Own Key)
                   </label>
                   <div style={{ position: 'relative' }}>
-                    <input
+                    <input id="custom-api-key"
                       type={showApiKey ? 'text' : 'password'}
                       placeholder="AIzaSy... (leave blank to use server environment key)"
                       value={profile.customApiKey}
@@ -450,7 +426,7 @@ export default function SettingsView({
           <SettingSection
             icon={Bell}
             title="Study Reminders & Retention Alerts"
-            description="Schedule nudges to maintain memory consolidation and spaced repetition intervals."
+            description="Get friendly reminders to review what you've learned on time."
           >
             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
               <ToggleSwitch
@@ -530,26 +506,10 @@ export default function SettingsView({
                 </button>
               </div>
 
-              {/* Telemetry Actions */}
-              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button
-                  type="button"
-                  onClick={handleExportData}
-                  className="btn btn-primary"
-                  style={{
-                    fontSize: '0.78rem',
-                    padding: '8px 16px',
-                    borderRadius: '8px',
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Download size={14} />
-                  <span>Export Telemetry (.JSON)</span>
-                </button>
+              <DataExport />
 
+              {/* Cache Actions */}
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
                 <button
                   type="button"
                   onClick={handleRefreshCache}
@@ -570,6 +530,7 @@ export default function SettingsView({
               </div>
             </div>
           </SettingSection>
+          <DeleteAccountSection key={user?.id || user?.email || 'guest'} user={user} onLogout={onLogout} onDeleteAccount={onDeleteAccount} deletionPending={deletionPending} />
         </div>
       </div>
     </PageContainer>

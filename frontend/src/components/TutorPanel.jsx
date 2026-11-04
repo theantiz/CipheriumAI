@@ -9,6 +9,9 @@
  *     syllabus topic notes, key algorithmic formulas/snippets, and suggested follow-ups.
  */
 
+import AiUsage from './AiUsage';
+import TutorFeedback from './TutorFeedback';
+import './TutorPanel.css';
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
   Bot, Brain, Paperclip, Send, RefreshCw, BookOpen, ExternalLink,
@@ -80,11 +83,14 @@ const GENERAL_QUESTIONS = [
 ];
 
 export default function TutorPanel({
+  quota,
   aiModel = 'gemini-2.5-flash',
   setAiModel = () => {},
   tutorMode = 'socratic',
   setTutorMode = () => {},
   chatMessages = [],
+  feedback,
+  conversations,
   chatInput = '',
   setChatInput = () => {},
   handleSendChat = () => {},
@@ -95,8 +101,26 @@ export default function TutorPanel({
   onClearHistory = () => {},
 }) {
 
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const isNarrowScreen = () => window.matchMedia?.('(max-width: 900px)').matches || false;
+  const [leftCollapsed, setLeftCollapsed] = useState(isNarrowScreen);
+  const [rightCollapsed, setRightCollapsed] = useState(isNarrowScreen);
+  const leftToggleRef = useRef(null);
+  const rightToggleRef = useRef(null);
+  const composerBlocked = !!(quota?.exhausted || conversations?.blocked || conversations?.loadingMessages || conversations?.creating || conversations?.activeId === 'legacy' || (conversations && conversations.activeId == null));
+  useEffect(() => {
+    const media = window.matchMedia?.('(max-width: 900px)');
+    const collapse = (event) => {
+      if (event.matches) { setLeftCollapsed(true); setRightCollapsed(true); }
+    };
+    media?.addEventListener?.('change', collapse);
+    return () => media?.removeEventListener?.('change', collapse);
+  }, []);
+  const closeLeft = () => { setLeftCollapsed(true); requestAnimationFrame(() => leftToggleRef.current?.focus()); };
+  const closeRight = () => { setRightCollapsed(true); requestAnimationFrame(() => rightToggleRef.current?.focus()); };
+  const selectConversation = (id) => {
+    conversations?.select?.(id);
+    if (isNarrowScreen()) closeLeft();
+  };
   const [copiedSnippet, setCopiedSnippet] = useState(null);
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
@@ -115,7 +139,7 @@ export default function TutorPanel({
   const activeTopicRef = useMemo(() => {
     if (!activeTopic) {
       return {
-        notes: 'Select a syllabus topic to bind curriculum context, formulas, and tailored diagnostic prompts.',
+        notes: 'Choose a topic to focus on, or ask any question below.',
         formulas: [
           { label: 'Time Complexity Hierarchy', code: 'O(1) < O(log n) < O(n) < O(n log n) < O(n²) < O(2ⁿ) < O(n!)' },
           { label: 'Binary Search Invariant', code: 'low, high = 0, len(arr) - 1\nwhile low <= high:\n  mid = low + (high - low) // 2' },
@@ -166,7 +190,7 @@ export default function TutorPanel({
   const handleKeyDown = (e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      if (chatInput.trim() && !tutorThinking) {
+      if (chatInput.trim() && !tutorThinking && !composerBlocked) {
         handleSendChat(e);
       }
     }
@@ -174,6 +198,7 @@ export default function TutorPanel({
 
   return (
     <div
+      className="tutor-workspace"
       style={{
         display: 'flex',
         flexDirection: 'row',
@@ -187,6 +212,10 @@ export default function TutorPanel({
     >
       {/* Panel 1: Left workspace / topics / history (260px collapsible) */}
       <aside
+        id="tutor-conversation-panel"
+        aria-label="Conversations and topics"
+        aria-hidden={leftCollapsed}
+        className={`tutor-side-panel tutor-left-panel ${leftCollapsed ? 'is-collapsed' : ''}`}
         style={{
           width: leftCollapsed ? '0px' : '260px',
           minWidth: leftCollapsed ? '0px' : '260px',
@@ -231,7 +260,8 @@ export default function TutorPanel({
 
             <button
               type="button"
-              onClick={() => setLeftCollapsed(true)}
+              onClick={closeLeft}
+              aria-label="Hide conversations and topics"
               title="Collapse left panel"
               style={{
                 background: 'transparent',
@@ -252,10 +282,11 @@ export default function TutorPanel({
           <div style={{ padding: '12px 16px 8px' }}>
             <button
               type="button"
+              disabled={conversations?.creating}
               onClick={() => {
                 setChatInput('');
-                if (setTutorTopicId) setTutorTopicId(null);
                 if (onClearHistory) onClearHistory();
+                if (isNarrowScreen()) closeLeft();
                 if (inputRef.current) inputRef.current.focus();
               }}
 
@@ -318,6 +349,7 @@ export default function TutorPanel({
                 <span>Syllabus Grounding</span>
               </div>
 
+              <p style={{ fontSize: '0.72rem', padding: '0 6px', lineHeight: 1.4 }}>New conversations save the selected topic. Changes in an existing chat apply only to the next messages.</p>
               {/* General Context (no specific topic) */}
               <button
                 type="button"
@@ -340,7 +372,7 @@ export default function TutorPanel({
                 }}
               >
                 <Sparkles size={13} color={tutorTopicId === null ? '#818cf8' : 'var(--text-tertiary, #6B7280)'} />
-                <span>General Tutor Context</span>
+                <span>All Topics (General)</span>
               </button>
 
               {/* Individual Topics List */}
@@ -401,69 +433,42 @@ export default function TutorPanel({
               })}
             </div>
 
-            {/* Recent Practice / Tutoring Sessions */}
-            <div>
-              <div
-                style={{
-                  fontSize: '0.68rem',
-                  fontWeight: 800,
-                  color: 'var(--text-tertiary, #6B7280)',
-                  textTransform: 'uppercase',
-                  letterSpacing: '0.06em',
-                  padding: '4px 6px',
-                  marginBottom: '4px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '5px',
-                }}
-              >
-                <MessageSquare size={12} color="#818CF8" />
-                <span>Recent Inquiries</span>
+            <section aria-label="Saved conversations" className="tutor-conversations">
+              <div className="tutor-conversations-heading">
+                <h2><MessageSquare size={12} aria-hidden="true" /> Conversations</h2>
+                <button type="button" onClick={() => conversations?.refresh?.()} disabled={conversations?.listLoading} aria-label="Refresh conversations">
+                  <RefreshCw size={14} aria-hidden="true" />
+                </button>
               </div>
-
-              {[
-                { label: 'Two Sum vs Sliding Window', time: 'Today' },
-                { label: 'BST Inorder traversal proofs', time: 'Yesterday' },
-                { label: 'Dynamic Programming Memoization', time: '3d ago' },
-              ].map((sess, idx) => (
-                <div
-                  key={idx}
-                  style={{
-                    padding: '8px 10px',
-                    borderRadius: '6px',
-                    fontSize: '0.76rem',
-                    color: 'var(--text-secondary, #9CA3AF)',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '2px',
-                    transition: 'background 0.12s ease',
-                  }}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.background = 'var(--bg-surface, #1E1E22)';
-                    e.currentTarget.style.color = '#F3F4F6';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.background = 'transparent';
-                    e.currentTarget.style.color = 'var(--text-secondary, #9CA3AF)';
-                  }}
-                  onClick={() => setChatInput(`Can you explain ${sess.label}?`)}
-                >
-                  <span style={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {sess.label}
-                  </span>
-                  <span style={{ fontSize: '0.68rem', color: 'var(--text-tertiary, #6B7280)' }}>
-                    {sess.time}
-                  </span>
-                </div>
-              ))}
-            </div>
+              <button type="button" className="tutor-conversation-item" aria-current={conversations?.activeId === null ? 'true' : undefined}
+                onClick={onClearHistory} disabled={conversations?.creating}>Start new conversation</button>
+              {conversations?.listLoading && <p role="status">Loading conversations…</p>}
+              {conversations?.listError && <p role="alert">{conversations.listError}</p>}
+              {!conversations?.listLoading && !conversations?.listError && !conversations?.items?.length && <p>No saved conversations yet. Choose New Conversation to start one.</p>}
+              <ul>
+                {(conversations?.items || []).map((conversation) => (
+                  <li key={conversation.id}>
+                    <button type="button" className="tutor-conversation-item" aria-label={`Open conversation: ${conversation.title || 'Untitled conversation'}`} onClick={() => selectConversation(conversation.id)}
+                      aria-current={conversations?.activeId === conversation.id ? 'true' : undefined}>
+                      <span>{conversation.title || 'Untitled conversation'}</span>
+                      <small style={{ display: 'block', marginTop: 3 }}>Conversation #{conversation.id}</small>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              {conversations?.hasMore && <button type="button" onClick={() => conversations.loadMore()} disabled={conversations.listLoading}>Load more conversations</button>}
+              <button type="button" className="tutor-conversation-item" aria-current={conversations?.activeId === 'legacy' ? 'true' : undefined}
+                onClick={() => { conversations?.showLegacy?.(); if (isNarrowScreen()) closeLeft(); }}>Earlier history (read-only)</button>
+            </section>
           </div>
         </div>
       </aside>
 
       {/* Panel 2: Center chat stream & sticky input bar (flex-1) */}
       <main
+        className="tutor-chat-main"
+        aria-label="Tutor chat"
+        aria-busy={!!conversations?.loadingMessages}
         style={{
           flex: 1,
           minWidth: 0,
@@ -475,7 +480,7 @@ export default function TutorPanel({
         }}
       >
         {/* Top Slim Workspace Bar */}
-        <div
+        <div className="tutor-topbar"
           style={{
             height: '48px',
             padding: '0 16px',
@@ -491,6 +496,10 @@ export default function TutorPanel({
             {leftCollapsed && (
               <button
                 type="button"
+                ref={leftToggleRef}
+                aria-label="Show conversations and topics"
+                aria-expanded={!leftCollapsed}
+                aria-controls="tutor-conversation-panel"
                 onClick={() => setLeftCollapsed(false)}
                 title="Expand left topics panel"
                 style={{
@@ -552,7 +561,7 @@ export default function TutorPanel({
                   cursor: 'pointer',
                 }}
               >
-                <option value="socratic">🏛️ Socratic Guided Mode</option>
+                <option value="socratic">🏛️ Step-by-Step Questions (Socratic)</option>
                 <option value="direct">💡 Direct Instructor Mode</option>
                 <option value="exam_prep">⚡ Exam & Drill Prep Mode</option>
               </select>
@@ -581,6 +590,10 @@ export default function TutorPanel({
             {rightCollapsed && (
               <button
                 type="button"
+                ref={rightToggleRef}
+                aria-label="Show context and reference"
+                aria-expanded={!rightCollapsed}
+                aria-controls="tutor-context-panel"
                 onClick={() => setRightCollapsed(false)}
                 title="Expand context & reference rail"
                 style={{
@@ -600,8 +613,15 @@ export default function TutorPanel({
           </div>
         </div>
 
+        {conversations?.loadingMessages && <p role="status" className="tutor-status">Loading conversation…</p>}
+        {conversations?.activeId === null && <p className="tutor-status">Start a new conversation or select a saved conversation to continue.</p>}
+        {conversations?.creating && <p role="status" className="tutor-status">Creating conversation…</p>}
+        <AiUsage quota={quota} compact />
+        {conversations?.error && <p role="alert" className="tutor-status">{conversations.error}</p>}
+        {conversations?.activeId === 'legacy' && <p className="tutor-status">Earlier history shows the oldest 30 messages across all chats and is read-only. Start or select a conversation to send a new message.</p>}
         {/* Scrollable Message Thread */}
-        <div
+        <div className="tutor-message-thread"
+
           style={{
             flex: 1,
             overflowY: 'auto',
@@ -641,12 +661,12 @@ export default function TutorPanel({
 
               <div>
                 <h3 style={{ margin: '0 0 6px', fontSize: '1.25rem', fontWeight: 800, color: '#F3F4F6' }}>
-                  Cipherium AI Pedagogical Tutor
+                  Cipherium AI Tutor
                 </h3>
                 <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--text-secondary, #9CA3AF)', lineHeight: 1.55 }}>
                   {activeTopic
-                    ? `I am currently grounded in ${activeTopic.name}. Ask me about theoretical intuition, code implementations, or edge cases.`
-                    : 'Grounded in your active curriculum and diagnostic gap analysis. Ask a conceptual question, request step-by-step algorithms, or practice edge cases.'}
+                    ? `Ask me anything about ${activeTopic.name} — from simple explanations to code examples and practice problems.`
+                    : 'Ask any question to get clear explanations, helpful hints, and code examples.'}
                 </p>
               </div>
 
@@ -654,7 +674,7 @@ export default function TutorPanel({
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))',
                   gap: '12px',
                   width: '100%',
                   marginTop: '12px',
@@ -954,6 +974,8 @@ export default function TutorPanel({
                     )}
                   </div>
 
+                  <TutorFeedback message={msg} feedback={feedback} />
+
                   {/* Attached verified learning resources */}
                   {msg.suggested_resources && msg.suggested_resources.length > 0 && (
                     <div
@@ -1045,6 +1067,7 @@ export default function TutorPanel({
 
         {/* Bottom sticky input bar (centered & responsive) */}
         <div
+          className="tutor-composer"
           style={{
             padding: '14px 24px',
             borderTop: '1px solid var(--border-stroke, #2D2D35)',
@@ -1053,7 +1076,7 @@ export default function TutorPanel({
           }}
         >
           <form
-            onSubmit={handleSendChat}
+            onSubmit={(event) => { event.preventDefault(); if (!composerBlocked && !tutorThinking && chatInput.trim()) handleSendChat(event); }}
             style={{
               maxWidth: '850px',
               margin: '0 auto',
@@ -1093,6 +1116,8 @@ export default function TutorPanel({
 
               <input
                 ref={inputRef}
+                aria-label="Message the tutor"
+                disabled={composerBlocked}
                 type="text"
                 placeholder={
                   activeTopic
@@ -1115,7 +1140,8 @@ export default function TutorPanel({
 
               <button
                 type="submit"
-                disabled={!chatInput.trim() || tutorThinking}
+                aria-label="Send message"
+                disabled={!chatInput.trim() || tutorThinking || composerBlocked}
                 style={{
                   width: '34px',
                   height: '34px',
@@ -1126,7 +1152,7 @@ export default function TutorPanel({
                   alignItems: 'center',
                   justifyContent: 'center',
                   cursor: 'pointer',
-                  opacity: !chatInput.trim() || tutorThinking ? 0.45 : 1,
+                  opacity: !chatInput.trim() || tutorThinking || composerBlocked ? 0.45 : 1,
                   transition: 'opacity 0.15s ease, transform 0.15s ease',
                   flexShrink: 0,
                 }}
@@ -1154,6 +1180,10 @@ export default function TutorPanel({
 
       {/* Panel 3: Right context & reference rail (320px collapsible) */}
       <aside
+        id="tutor-context-panel"
+        aria-label="Context and reference"
+        aria-hidden={rightCollapsed}
+        className={`tutor-side-panel tutor-right-panel ${rightCollapsed ? 'is-collapsed' : ''}`}
         style={{
           width: rightCollapsed ? '0px' : '320px',
           minWidth: rightCollapsed ? '0px' : '320px',
@@ -1186,7 +1216,8 @@ export default function TutorPanel({
 
             <button
               type="button"
-              onClick={() => setRightCollapsed(true)}
+              onClick={closeRight}
+              aria-label="Hide context and reference"
               title="Collapse right rail"
               style={{
                 background: 'transparent',
